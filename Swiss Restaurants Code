@@ -1,0 +1,344 @@
+library(tidyverse)
+library(performance)
+library(faraway)
+library(MASS)
+library(corrplot)
+library(corrr)
+library(rsample)
+library(dplyr)
+library(car)
+library(ggplot2)
+library(tidyr)
+restdata <- read.table(file.choose(),header=TRUE)
+restdata[restdata == 11 | restdata == 12] <- NA
+#g27a General satisfaction with restaurant
+#g06f Good parking situation
+#g06e Good to access by public transport
+#g07d Kindly placed at good table
+#g08c Choice on the menu
+#g09a Taste of food
+#g09c Meals large enough
+#g09d Quality of ingredients
+#g13a Quality of general service
+#g13j Waiting time before payment
+ 10
+#g14b Friendliness
+#g14a Neat appearance of waiters
+#g14d Competent information about food and drinks
+#g15a Atmosphere in the restaurant
+#g15g Air quality/freshness
+#g15i Restaurant clean
+#g15l Comfortable chairs
+#g16b Correctness of bill
+#############LM###########
+model1 <- lm(g27a ~ ., data = restdata)
+summary(model1)
+cormatrix <- cor(restdata, use = "pairwise.complete.obs")
+library(corrplot)
+corrplot(
+  cormatrix,
+  method = "color",
+  type = "upper",
+  addCoef.col = "black",
+  number.cex = 0.8,
+  tl.col = "black",
+  tl.srt = 45,
+  tl.cex = 1,
+  col = colorRampPalette(c("lightblue", "white", "darkorange"))(200),
+  mar = c(0, 0, 2, 0)
+)
+vif_values <- vif(model1)
+print(vif_values)
+check_model(model1)
+check_outliers(model1)
+library(mice)
+md.pattern(restdata[,2:18])
+#Number of rows with no missing data
+complete_rows <- restdata %>%
+  filter(complete.cases(.)) %>%
+  nrow()
+#What kind of missingness?
+library(naniar)
+png("missingvalues.png", width=800, height=600)
+p <- vis_miss(restdata)
+p + theme(axis.text.x = element_text(size = 14),
+         axis.text.y = element_text(size = 14),
+         axis.title = element_text(size = 16),
+         plot.margin = margin(9, 9, 9, 9))
+dev.off()
+tapply(restdata$g27a, is.na(restdata$g06f), mean, na.rm = TRUE)
+t.test(restdata$g27a ~ is.na(restdata$g06f))
+library(MissMech)
+11
+
+TestMCARNormality(restdata)
+library(mice)
+for(i in 1:ncol(restdata)) {
+  restdata[, i][is.na(restdata[, i])] <- mean(restdata[, i], na.rm = TRUE)
+}
+print(restdata)
+model2 <- lm(g27a ~ ., data = restdata) #mean imputation
+summary(model2)
+imputed_data1 <- mice(restdata, method = "norm.predict", m = 1)
+print(imputed_data1$data)
+imputed_data2 <- mice(restdata, method = "pmm", m = 1, seed=500) #chosen method
+impdata <- complete(imputed_data2, 1)
+strip_data <- data.frame(
+  Value = c(restdata$g06f, impdata$g06f),
+  Type = rep(c("Original", "Imputed"), each=length(restdata$g06f))
+)
+png("stripplot.png",width=800,height=600)
+ggplot(strip_data, aes(x=Type, y=Value)) +
+  geom_jitter(aes(color=Type), width=0.2, size=2) +
+  labs(title="Strip Plot: Original vs Imputed Values for g06f", y="g06f") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 22, face = "bold"),
+       axis.title.x = element_text(size = 18),
+       axis.title.y = element_text(size = 18),
+       axis.text.x = element_text(size = 14),
+       axis.text.y = element_text(size = 14),
+       legend.position="none")
+dev.off()
+model3 <- lm(g27a ~ ., data = impdata)
+summary(model3)
+vif_values <- vif(model3)
+print(vif_values)
+check_model(model3)
+check_outliers(model3)
+cormatrix <- cor(impdata)
+library(corrplot)
+png("corplotswiss.png",width=800, height=600)
+corrplot(
+  cormatrix,
+  method = "color",
+  type = "upper",
+  addCoef.col = "black",
+  number.cex = 1,
+  tl.col = "black",
+  tl.srt = 45,
+  tl.cex = 1.2,
+  col = colorRampPalette(c("lightblue", "white", "darkorange"))(200),
+12
+
+  mar = c(0, 0, 2, 0)
+)
+dev.off()
+implong_data <- pivot_longer(impdata, cols=everything(),
+                          names_to = "Group", values_to = "Score")
+library(ggridges)
+png("ridge.png", width=800, height=600)
+ggplot(implong_data, aes(x = Score, y = Group, fill = Group)) +
+  geom_density_ridges(scale = 3, rel_min_height = 0.01) +
+  labs(x = "Score", y = "Group") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.position = "none")
+dev.off()
+#Residuals vs Fitted Values
+plot(model3$fitted.values, resid(model3),
+    main="Residuals vs Fitted", xlab="Fitted Values", ylab="Residuals")
+abline(h=0, col="red", lwd=2)
+#Q-Q Plot
+qqnorm(resid(model3), col="red", lwd=2)
+#Histogram of Residuals
+hist(resid(model3), breaks=30, main="Histogram of Residuals", col="lightblue")
+#Scale-Location Plot
+plot(model3$fitted.values, sqrt(abs(resid(model3))),
+     main="Scale-Location Plot", xlab="Fitted Values", ylab="sqrt|Residuals|")
+abline(h=0, col="red", lwd=2)
+#Cooks Distance Plot
+png("cooks.png",width=800, height=600)
+plot(cooks.distance(model3), type="h", ylab="Cooks Distance",cex.main=1.5,
+    cex.lab=1.3, cex.axis=1.2)
+abline(h=4/(length(resid(model3))), col="red", lwd=2)
+dev.off()
+library(robustbase)
+roblm<-lmrob(g27a~., data=impdata, estimator="MM")
+summary(roblm)
+#Residuals vs Fitted Values
+png("check1.png",width=800,height=600)
+plot(roblm$fitted.values, resid(rlmrobust_model),
+13
+
+    main="Residuals vs Fitted Values", xlab="Fitted Values",
+        ylab="Residuals",cex.main=1.5,cex.lab=1.3, cex.axis=1.2)
+abline(h=0, col="red", lwd=2)
+dev.off()
+#Q-Q Plot
+png("check2.png",width=800,height=600)
+qqnorm(resid(roblm), col="red", lwd=2,cex.main=1.5, cex.lab=1.3, cex.axis=1.2)
+dev.off()
+#Histogram of Residuals
+png("check3.png",width=800,height=600)
+hist(resid(roblm), breaks=30, main="Histogram of Residuals", col="lightblue",
+    cex.main=1.5,cex.lab=1.3, cex.axis=1.2)
+dev.off()
+#Scale-Location Plot
+png("check4.png",width=800,height=600)
+plot(roblm, which = 3, main = "Scale-Location Plot", cex.main=1.5,cex.lab=1.3,
+    cex.axis=1.2)
+dev.off()
+#######FA######
+library(psych)
+impdata<-imputed_data2$data
+impdata_no_g27a <- impdata[, !(names(impdata) %in% "g27a")]
+R_imp <- cor(impdata_no_g27a)
+imp_fa1vmax <- fa(r = R_imp, nfactors = 2, fm = "pa", rotate = "varimax")
+    #2-factor model
+print(imp_fa1vmax)
+png("fadiagram.png", width=800, height=600)
+fa.diagram(imp_fa1vmax,
+          main = "Factor Analysis Diagram",
+          cex.main = 1.5,
+          cex.lab = 1.3,
+          cex.axis = 1.2)
+dev.off()
+imp_fa2vmax <- fa(r = R_imp, nfactors = 3, fm = "pa", rotate = "varimax")
+    #3-factor model
+print(imp_fa2vmax)
+fa.diagram(imp_fa2vmax)
+imp_fa3vmax <- fa(r = R_imp, nfactors = 4, fm = "pa", rotate = "varimax")
+    #4-factor model
+print(imp_fa3vmax)
+fa.diagram(imp_fa3vmax)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+14
+
+loadings_df <- data.frame(
+  Variable = c("g06f", "g06e", "g07d", "g08c", "g09a", "g09c", "g09d", "g13a",
+             "g13j", "g14a", "g14b", "g14d", "g15a", "g15g", "g15i", "g15l",
+                 "g16b"),
+  PA1 = c(0.13, 0.05, 0.59, 0.36, 0.33, 0.26, 0.33, 0.78, 0.56, 0.74, 0.77,
+     0.69,
+         0.59, 0.40, 0.55, 0.44, 0.30),
+  PA2 = c(0.20, 0.03, 0.34, 0.56, 0.77, 0.54, 0.79, 0.36, 0.30, 0.41, 0.31,
+     0.41,
+         0.49, 0.46, 0.57, 0.39, 0.36))
+print(loadings_df)
+png("fact.png",width=800,height=600)
+ggplot(loadings_df, aes(x = PA1, y = PA2, label = Variable)) +
+  geom_point(color = "blue", size = 3) +
+  geom_text(vjust = -0.5, hjust = 0.5, size = 5) +
+  labs(title = "Factor Loadings for PA1 and PA2",
+      x = "Factor 1 (PA1) Loadings",
+      y = "Factor 2 (PA2) Loadings") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14)
+) dev.off()
+#########CLUSTER########
+dist_questions <- as.dist(1 - cor(impdata_no_g27a))
+#Hierarchical clustering for questions
+hc_questions <- hclust(dist_questions, method = "ward.D2")
+png("clusttt.png",width=800,height=600)
+plot(hc_questions, main = "Hierarchical Clustering of Questions", xlab = "",
+    sub = "",cex.main = 1.8,
+     cex.lab = 1.5,
+     cex.axis = 1.3)
+dev.off()
+library(factoextra)
+#####USING GROUPED VARIABLES######
+#Calculate the mean of all the questions forming a Group, and create new
+    #variable Group_.. with the mean
+Group_06 <- rowMeans(impdata[c("g06f", "g06e")], na.rm = TRUE)
+15
+
+Group_07 <- rowMeans(impdata[c("g07d")], na.rm = TRUE)
+Group_08 <- rowMeans(impdata[c("g08c")], na.rm = TRUE)
+Group_09 <- rowMeans(impdata[c("g09a", "g09c", "g09d")], na.rm = TRUE)
+Group_13 <- rowMeans(impdata[c("g13a", "g13j")], na.rm = TRUE)
+Group_14 <- rowMeans(impdata[c("g14a", "g14b", "g14d")], na.rm = TRUE)
+Group_15 <- rowMeans(impdata[c("g15a", "g15g", "g15i", "g15l")], na.rm = TRUE)
+Group_16 <- rowMeans(impdata[c("g16b")], na.rm = TRUE)
+grouped_means <- data.frame(
+  Group_06 = Group_06,
+  Group_07 = Group_07,
+  Group_08 = Group_08,
+  Group_09 = Group_09,
+  Group_13 = Group_13,
+  Group_14 = Group_14,
+  Group_15 = Group_15,
+  Group_16 = Group_16
+)
+grouped_means <- cbind(g27a = impdata$g27a, grouped_means)
+head(grouped_means)
+groupR<-cor(grouped_means)
+png("groupcorr.png",width=800, height=600)
+corrplot(
+groupR,
+method = "color",
+type = "upper",
+addCoef.col = "black",
+number.cex = 1,
+tl.col = "black",
+tl.srt = 45,
+tl.cex = 1.2, s
+col = colorRampPalette(c("lightblue", "white", "darkorange"))(200), mar = c(0, 0, 2, 0)
+) dev.off()
+grouped_means_no_g27a <- grouped_means[, !(names(grouped_means) %in% "g27a")]
+Rgroupfa<-cor(grouped_means_no_g27a)
+groupfa1vmax <- fa(r = Rgroupfa, nfactors = 2, fm = "pa", rotate = "varimax")
+    #2-factor model
+print(groupfa1vmax)
+fa.diagram(groupfa1vmax)
+groupfa2vmax <- fa(r = Rgroupfa, nfactors = 3, fm = "pa", rotate = "varimax")
+    #3-factor model
+print(groupfa2vmax)
+fa.diagram(groupfa2vmax)
+library(robustbase)
+grouproblm<-lmrob(g27a~., data=grouped_means)
+summary(grouproblm)
+16
+
+#Residuals Plot
+residuals <- residuals(grouproblm)
+plot(residuals, main = "Residuals of the Robust Regression Model", ylab =
+    "Residuals", xlab = "Index")
+abline(h = 0, col = "red")
+#Leverage and Influence
+leverage <- hatvalues(grouproblm)
+plot(leverage, main = "Leverage of Observations", ylab = "Leverage", xlab =
+"Index")
+#Q-Q plot for residuals
+qqnorm(residuals)
+qqline(residuals, col = "red")
+#Histogram of residuals
+hist(residuals, main = "Histogram of Residuals", xlab = "Residuals", col =
+    "lightblue", breaks = 30)
+#Check for Multicollinearity (VIF)
+library(car)
+vif(grouproblm)
+#Plot Fitted vs Actual
+fitted_values <- fitted(grouproblm)
+plot(fitted_values, grouped_means$g27a, main = "Fitted vs Actual", ylab =
+    "Actual g27a", xlab = "Fitted values")
+abline(0, 1, col = "red")
+corre_matrix <- cor(grouped_means_no_g27a)
+grouplong_data <- pivot_longer(grouped_means, cols=everything(),
+                       names_to = "Group", values_to = "Score")
+grouplong_data_filtered <- grouplong_data %>%
+  filter(Group != "g27a")
+png("ridgegroup.png", width=800, height=600)
+ggplot(grouplong_data_filtered, aes(x = Score, y = Group, fill = Group)) +
+  geom_density_ridges(scale = 3, rel_min_height = 0.01) +
+  labs(x = "Score", y = "Group") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    axis.title.x = element_text(size = 18),
+    axis.title.y = element_text(size = 18),
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.position = "none")
+dev.off()
+ 
